@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Module, Lesson, LessonMaterial, UserProgress } from '../../types';
-import { ChevronLeft, Download, CheckCircle, Circle, Play, FileText } from 'lucide-react';
+import { ChevronLeft, Download, CheckCircle, Circle, Play, FileText, Info } from 'lucide-react';
 
 interface LessonViewerProps {
   courseId: string;
@@ -18,13 +18,32 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
   const [materials, setMaterials] = useState<LessonMaterial[]>([]);
   const [progress, setProgress] = useState<Record<string, UserProgress>>({});
   const [loading, setLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [completingLesson, setCompletingLesson] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        setUserId(user?.id ?? null);
+      } catch (error) {
+        console.error('Error loading user session:', error);
+      }
+    };
+
+    fetchUser();
+  }, []);
 
   useEffect(() => {
     loadCourseData();
-  }, [courseId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseId, userId]);
 
   const loadCourseData = async () => {
+    setLoading(true);
     try {
       const { data: modulesData } = await supabase
         .from('modules')
@@ -50,16 +69,34 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
 
         setModules(modulesWithLessons);
 
-        const firstLesson = modulesWithLessons[0]?.lessons[0];
-        if (firstLesson) {
-          setCurrentLesson(firstLesson);
-          loadLessonMaterials(firstLesson.id);
+        const previouslySelectedLessonId = currentLesson?.id;
+        const firstLesson = modulesWithLessons[0]?.lessons[0] ?? null;
+        const nextLesson =
+          (previouslySelectedLessonId &&
+            modulesWithLessons
+              .flatMap((module) => module.lessons)
+              .find((lesson) => lesson.id === previouslySelectedLessonId)) ||
+          firstLesson ||
+          null;
+
+        if (nextLesson) {
+          setCurrentLesson(nextLesson);
+          await loadLessonMaterials(nextLesson.id);
+        } else {
+          setCurrentLesson(null);
+          setMaterials([]);
         }
       }
 
-      const { data: progressData } = await supabase
-        .from('user_progress')
-        .select('*');
+      const progressQuery = supabase.from('user_progress').select('*');
+      if (userId) {
+        progressQuery.eq('user_id', userId);
+      }
+      const { data: progressData, error: progressError } = await progressQuery;
+
+      if (progressError) {
+        throw progressError;
+      }
 
       if (progressData) {
         const progressMap: Record<string, UserProgress> = {};
@@ -110,40 +147,87 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
 
   const completeLesson = async () => {
     if (!currentLesson) return;
+    setStatusMessage(null);
 
     setCompletingLesson(true);
     try {
-      const { data: existingProgress } = await supabase
+      const {
+        data: { user },
+        error: sessionError,
+      } = await supabase.auth.getUser();
+
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      if (!user) {
+        throw new Error('Sessão expirada. Faça login novamente para continuar.');
+      }
+
+      const { data: existingProgress, error: fetchError } = await supabase
         .from('user_progress')
         .select('*')
         .eq('lesson_id', currentLesson.id)
         .maybeSingle();
 
-      if (existingProgress) {
-        await supabase
-          .from('user_progress')
-          .update({
-            completed: true,
-            completed_at: new Date().toISOString(),
-            last_watched_at: new Date().toISOString(),
-          })
-          .eq('id', existingProgress.id);
-      } else {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          await supabase.from('user_progress').insert({
-            user_id: user.id,
-            lesson_id: currentLesson.id,
-            completed: true,
-            completed_at: new Date().toISOString(),
-            last_watched_at: new Date().toISOString(),
-          });
-        }
+      if (fetchError) {
+        throw fetchError;
       }
 
-      await loadCourseData();
+      const now = new Date().toISOString();
+      const payload = {
+        user_id: user.id,
+        lesson_id: currentLesson.id,
+        completed: true,
+        completed_at: now,
+        last_watched_at: now,
+      };
+
+      let updatedProgress: UserProgress | null = null;
+
+      if (existingProgress) {
+        const { data, error } = await supabase
+          .from('user_progress')
+          .update({
+            ...payload,
+          })
+          .eq('id', existingProgress.id)
+          .select()
+          .single();
+
+        if (error) {
+          throw error;
+        }
+
+        updatedProgress = data;
+      } else {
+        const { data, error } = await supabase.from('user_progress').insert(payload).select().single();
+
+        if (error) {
+          throw error;
+        }
+
+        updatedProgress = data;
+      }
+
+      if (updatedProgress) {
+        setProgress((prev) => ({
+          ...prev,
+          [currentLesson.id]: updatedProgress as UserProgress,
+        }));
+      }
+
+      setStatusMessage({
+        type: 'success',
+        message: 'Aula marcada como concluída! Você pode avançar para a próxima.',
+      });
     } catch (error) {
       console.error('Error completing lesson:', error);
+      const message = error instanceof Error ? error.message : 'Não foi possível concluir esta aula.';
+      setStatusMessage({
+        type: 'error',
+        message,
+      });
     } finally {
       setCompletingLesson(false);
     }
@@ -216,6 +300,23 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
                   </button>
                 </div>
 
+                <div className="mt-4 text-sm text-slate-400 flex items-center gap-2">
+                  <Info className="w-4 h-4" />
+                  Marque a aula como concluída para liberar o próximo conteúdo.
+                </div>
+
+                {statusMessage && (
+                  <div
+                    className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
+                      statusMessage.type === 'success'
+                        ? 'border-green-500 bg-green-500/10 text-green-400'
+                        : 'border-red-500 bg-red-500/10 text-red-400'
+                    }`}
+                  >
+                    {statusMessage.message}
+                  </div>
+                )}
+
                 {currentLesson.description && (
                   <div className="mb-6">
                     <h3 className="text-orange-400 font-semibold mb-2">Descrição</h3>
@@ -261,6 +362,11 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
         <div className="w-full lg:w-96 bg-slate-800 border-l border-slate-700 overflow-y-auto">
           <div className="p-4">
             <h3 className="text-white font-bold text-lg mb-4">Conteúdo do Curso</h3>
+
+            <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 mb-4">
+              <CheckCircle className="w-4 h-4 text-orange-400" />
+              Use o botão “Concluir” acima do vídeo para avançar nas aulas.
+            </div>
 
             <div className="space-y-4">
               {modules.map((module, moduleIndex) => (
