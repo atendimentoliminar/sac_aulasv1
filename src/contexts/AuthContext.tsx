@@ -7,6 +7,8 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string, fullName: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -56,6 +58,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const ensureTrailingSlash = (url: string) => (url.endsWith('/') ? url : `${url}/`);
+
+  const resolveRedirectUrl = () => {
+    const configured = import.meta.env.VITE_SUPABASE_REDIRECT_URL?.trim();
+    if (configured) return ensureTrailingSlash(configured);
+
+    if (window.location.hostname === 'localhost') {
+      return ensureTrailingSlash(window.location.origin);
+    }
+
+    return ensureTrailingSlash('https://aulasac.onassessoriamkt.com.br');
+  };
 
   const getAuthUserFullName = (authUser: User) => {
     const metadata = authUser.user_metadata as Record<string, unknown>;
@@ -108,10 +123,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/`,
+        redirectTo: resolveRedirectUrl(),
       },
     });
     if (error) throw error;
+  };
+
+  const signInWithEmail = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+  };
+
+  const signUpWithEmail = async (email: string, password: string, fullName: string) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: resolveRedirectUrl(),
+        data: {
+          full_name: fullName,
+        },
+      },
+    });
+    if (error) throw error;
+
+    if (data.user) {
+      const { error: insertError } = await supabase.from('user_profiles').insert({
+        id: data.user.id,
+        full_name: fullName,
+        is_admin: false,
+      });
+
+      if (insertError) {
+        // If the profile already exists (e.g. user completed OAuth previously), just log the error.
+        console.error('Error creating user profile after sign up:', insertError);
+      }
+    }
   };
 
   const signOut = async () => {
@@ -120,7 +167,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, isAdmin, signInWithGoogle, signOut }}>
+    <AuthContext.Provider
+      value={{ user, loading, isAdmin, signInWithGoogle, signInWithEmail, signUpWithEmail, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   );
