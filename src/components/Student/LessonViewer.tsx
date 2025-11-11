@@ -253,8 +253,8 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
 
   return (
     <div className="min-h-screen bg-slate-900">
-      <div className="flex flex-col lg:flex-row h-screen">
-        <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex flex-col lg:flex-row lg:h-screen">
+        <div className="flex-1 flex flex-col lg:overflow-hidden">
           <div className="bg-slate-800 border-b border-slate-700 p-4">
             <button
               onClick={onBack}
@@ -359,8 +359,8 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
           )}
         </div>
 
-        <div className="w-full lg:w-96 bg-slate-800 border-l border-slate-700 overflow-y-auto">
-          <div className="p-4">
+        <div className="w-full lg:w-96 bg-slate-800 border-t border-slate-700 lg:border-t-0 lg:border-l lg:border-slate-700">
+          <div className="p-4 h-full flex flex-col">
             <h3 className="text-white font-bold text-lg mb-4">Conteúdo do Curso</h3>
 
             <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 mb-4">
@@ -368,7 +368,7 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
               Use o botão “Concluir” acima do vídeo para avançar nas aulas.
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 overflow-y-auto pr-2 max-h-[50vh] lg:flex-1 lg:pr-0 lg:max-h-none">
               {modules.map((module, moduleIndex) => (
                 <div key={module.id} className="border border-slate-700 rounded-lg overflow-hidden">
                   <div className="bg-slate-700 p-3">
