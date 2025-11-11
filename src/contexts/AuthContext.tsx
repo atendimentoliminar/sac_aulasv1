@@ -6,8 +6,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   isAdmin: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, fullName: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -21,11 +20,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        setLoading(true);
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
         setUser(session?.user ?? null);
         if (session?.user) {
-          await checkAdminStatus(session.user.id);
+          await ensureUserProfile(session.user);
         } else {
+          setIsAdmin(false);
           setLoading(false);
         }
       } catch (error) {
@@ -36,11 +39,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       (async () => {
+        setLoading(true);
         setUser(session?.user ?? null);
         if (session?.user) {
-          await checkAdminStatus(session.user.id);
+          await ensureUserProfile(session.user);
         } else {
           setIsAdmin(false);
           setLoading(false);
@@ -51,33 +57,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const checkAdminStatus = async (userId: string) => {
-    const { data } = await supabase
-      .from('user_profiles')
-      .select('is_admin')
-      .eq('id', userId)
-      .maybeSingle();
+  const getAuthUserFullName = (authUser: User) => {
+    const metadata = authUser.user_metadata as Record<string, unknown>;
+    const nameFromMetadata =
+      (metadata?.full_name as string | undefined) ??
+      (metadata?.name as string | undefined) ??
+      [metadata?.given_name, metadata?.family_name]
+        .filter((part): part is string => typeof part === 'string' && part.length > 0)
+        .join(' ');
 
-    setIsAdmin(data?.is_admin ?? false);
-    setLoading(false);
+    return nameFromMetadata || authUser.email || '';
   };
 
-  const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-  };
+  const ensureUserProfile = async (authUser: User) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('is_admin')
+        .eq('id', authUser.id)
+        .maybeSingle();
 
-  const signUp = async (email: string, password: string, fullName: string) => {
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) throw error;
+      if (error) {
+        console.error('Error fetching user profile:', error);
+        setIsAdmin(false);
+        return;
+      }
 
-    if (data.user) {
-      await supabase.from('user_profiles').insert({
-        id: data.user.id,
-        full_name: fullName,
-        is_admin: false,
-      });
+      if (!data) {
+        const { error: insertError } = await supabase.from('user_profiles').insert({
+          id: authUser.id,
+          full_name: getAuthUserFullName(authUser),
+          is_admin: false,
+        });
+
+        if (insertError) {
+          console.error('Error creating user profile:', insertError);
+        }
+
+        setIsAdmin(false);
+        return;
+      }
+
+      setIsAdmin(data.is_admin ?? false);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const signInWithGoogle = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/`,
+      },
+    });
+    if (error) throw error;
   };
 
   const signOut = async () => {
@@ -86,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, isAdmin, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, loading, isAdmin, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );
