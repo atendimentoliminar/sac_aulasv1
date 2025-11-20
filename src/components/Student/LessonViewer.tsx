@@ -174,12 +174,14 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
         throw fetchError;
       }
 
+      const isCurrentlyCompleted = existingProgress?.completed ?? false;
+      const newCompletedState = !isCurrentlyCompleted;
       const now = new Date().toISOString();
       const payload = {
         user_id: user.id,
         lesson_id: currentLesson.id,
-        completed: true,
-        completed_at: now,
+        completed: newCompletedState,
+        completed_at: newCompletedState ? now : null,
         last_watched_at: now,
       };
 
@@ -219,11 +221,13 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
 
       setStatusMessage({
         type: 'success',
-        message: 'Aula marcada como concluída! Você pode avançar para a próxima.',
+        message: newCompletedState
+          ? 'Aula marcada como concluída! Você pode avançar para a próxima.'
+          : 'Aula desmarcada como concluída.',
       });
     } catch (error) {
       console.error('Error completing lesson:', error);
-      const message = error instanceof Error ? error.message : 'Não foi possível concluir esta aula.';
+      const message = error instanceof Error ? error.message : 'Não foi possível atualizar o status desta aula.';
       setStatusMessage({
         type: 'error',
         message,
@@ -292,11 +296,11 @@ export function LessonViewer({ courseId, onBack }: LessonViewerProps) {
 
                   <button
                     onClick={completeLesson}
-                    disabled={completingLesson || progress[currentLesson.id]?.completed}
+                    disabled={completingLesson}
                     className="ml-4 bg-orange-500 hover:bg-orange-600 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold px-6 py-3 rounded-lg flex items-center gap-2 transition"
                   >
                     <CheckCircle className="w-5 h-5" />
-                    {progress[currentLesson.id]?.completed ? 'Concluído' : 'Concluir'}
+                    {progress[currentLesson.id]?.completed ? 'Desmarcar Conclusão' : 'Concluir'}
                   </button>
                 </div>
 
